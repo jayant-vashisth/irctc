@@ -1,6 +1,8 @@
 import express, { Request, Response } from "express";
 import dotenv from "dotenv";
 import trainRoutes from "./src/routes/train.routes";
+import bookingRoutes from "./src/routes/booking.routes";
+import authRoutes from "./src/routes/auth.routes";
 // import db from "./src/config/db";
 
 dotenv.config();
@@ -13,7 +15,10 @@ app.get("/", (req: Request, res: Response) => {
 });
 
 app.use(express.json());
+
 app.use("/api", trainRoutes);
+app.use("/api", bookingRoutes);
+app.use("/api", authRoutes);
 
 app.listen(PORT, () => {
   console.log("app listening");
