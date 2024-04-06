@@ -3,7 +3,6 @@ import dotenv from "dotenv";
 import trainRoutes from "./src/routes/train.routes";
 import bookingRoutes from "./src/routes/booking.routes";
 import authRoutes from "./src/routes/auth.routes";
-// import db from "./src/config/db";
 
 dotenv.config();
 
