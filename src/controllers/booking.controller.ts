@@ -1,7 +1,12 @@
 import { Request, Response } from "express";
-import { GetSeatsQuerySchema } from "../types/bookingTypes";
+import {
+  GetBookingByIdParamsSchema,
+  GetSeatsQuerySchema,
+} from "../types/bookingTypes";
 import { ZodError } from "zod";
 import db from "../config/db";
+import { produceBooking } from "../services/kafka";
+import { CustomRequest } from "../types/generalTypes";
 
 export const getSeatAvailability = async (req: Request, res: Response) => {
   try {
@@ -36,7 +41,8 @@ export const getSeatAvailability = async (req: Request, res: Response) => {
         );
 
         //@ts-ignore
-        const minSeatsAvailable = seatsAvailableResult.rows[0]?.min_seats_available;
+        const minSeatsAvailable =
+          seatsAvailableResult.rows[0]?.min_seats_available;
         return {
           train_no,
           source_arrival,
@@ -46,7 +52,7 @@ export const getSeatAvailability = async (req: Request, res: Response) => {
       })
     );
 
-    res.status(200).json({ data: trainsWithSeats });
+    return res.status(200).json({ data: trainsWithSeats });
   } catch (error) {
     if (error instanceof ZodError) {
       res.status(400).json({ error: error.errors });
@@ -57,9 +63,43 @@ export const getSeatAvailability = async (req: Request, res: Response) => {
   }
 };
 
-export const bookSeat = async (req: Request, res: Response) => {
+export const bookSeat = async (req: CustomRequest, res: Response) => {
   try {
-    const { train_no, source, destination, seats } = req.body;
+    const booking = await produceBooking({
+      ...req.body,
+      userId: req.userId,
+    });
+
+    res.status(200).json({ data: booking });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({ error: error.errors });
+    }
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const getBookingDetailsById = async (req: Request, res: Response) => {
+  try {
+    const { bookingId } = GetBookingByIdParamsSchema.parse(req.params);
+
+    const booking = await db.query(
+      "SELECT * FROM bookings where booking_id = $1",
+      [bookingId]
+    );
+
+    return res.send(200).json(booking);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return res.status(400).json({ error: error.errors });
+    }
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const bookingHandler = async (bookingData: any) => {
+  try {
+    const { train_no, source, destination, seats, userId } = bookingData;
 
     const routeResult: any = await db.query(
       `SELECT *
@@ -78,17 +118,14 @@ export const bookSeat = async (req: Request, res: Response) => {
       [train_no, source, destination]
     );
 
-    let minAvailableSeats = Infinity;
-    for (const station of routeResult.rows) {
-      if (station.seats_available < minAvailableSeats) {
-        minAvailableSeats = station.seats_available;
-      }
-    }
+    const minAvailableSeats = Math.min(
+      routeResult.rows.map(
+        (station: { seats_available: number }) => station.seats_available
+      )
+    );
 
     if (minAvailableSeats < seats) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Not enough available seats" });
+      throw new Error("Not enough seats");
     }
 
     for (const station of routeResult.rows) {
@@ -99,11 +136,16 @@ export const bookSeat = async (req: Request, res: Response) => {
         [updatedSeats, train_no, station.station_code]
       );
     }
+
+    const booking = await db.query(
+      "INSERT INTO bookings (userid, train_no, source_station, destination_station, status) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+      [userId, train_no, source, destination, "CONFIRMED"]
+    );
+    
+    return booking.rows;
   } catch (error) {
-    if (error instanceof ZodError) {
-      res.status(400).json({ error: error.errors });
-      return;
-    }
-    res.status(500).json({ error: "Internal server error" });
+    console.error("Error in bookingHandler:", error);
+
+    throw error;
   }
 };
